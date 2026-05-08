@@ -1,7 +1,7 @@
 mod app;
-mod backend;
 mod gh;
 mod state;
+mod tmux;
 mod ui;
 mod worktree;
 
@@ -50,7 +50,10 @@ fn main() -> Result<()> {
 
     let cwd = std::env::current_dir().context("failed to read current dir")?;
 
-    let backend = backend::detect_backend();
+    if !tmux_available() {
+        eprintln!("error: tmux not found in PATH. hcm requires tmux on Linux/Mac.");
+        std::process::exit(1);
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -58,7 +61,7 @@ fn main() -> Result<()> {
     let backend_term = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend_term)?;
 
-    let app = app::App::new(backend, cmd, workspace, cwd);
+    let app = app::App::new(tmux::Tmux::new(), cmd, workspace, cwd);
     let result = app.run(&mut terminal);
 
     disable_raw_mode()?;
@@ -71,4 +74,12 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn tmux_available() -> bool {
+    std::process::Command::new("tmux")
+        .arg("-V")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }

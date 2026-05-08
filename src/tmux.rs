@@ -1,20 +1,37 @@
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::{MultiplexerBackend, Session, SessionId, SpawnOptions};
+use crate::worktree::Worktree;
 
-pub struct TmuxBackend;
+pub type SessionId = String;
 
-impl TmuxBackend {
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub id: SessionId,
+    pub name: String,
+    pub cmd: String,
+    pub running: bool,
+    pub created_at: SystemTime,
+    pub cwd: PathBuf,
+    pub worktree: Option<Worktree>,
+}
+
+pub struct SpawnOptions<'a> {
+    pub name: &'a str,
+    pub cmd: &'a str,
+    pub cwd: &'a Path,
+}
+
+pub struct Tmux;
+
+impl Tmux {
     pub fn new() -> Self {
         Self
     }
-}
 
-impl MultiplexerBackend for TmuxBackend {
-    fn list_sessions(&self) -> Vec<Session> {
+    pub fn list_sessions(&self) -> Vec<Session> {
         let output = Command::new("tmux")
             .args([
                 "list-sessions",
@@ -55,7 +72,7 @@ impl MultiplexerBackend for TmuxBackend {
             .collect()
     }
 
-    fn spawn_session(&self, opts: SpawnOptions) -> Result<SessionId> {
+    pub fn spawn_session(&self, opts: SpawnOptions) -> Result<SessionId> {
         let cwd_str = opts.cwd.to_string_lossy().into_owned();
         let mut args: Vec<String> = vec![
             "new-session".into(),
@@ -81,7 +98,7 @@ impl MultiplexerBackend for TmuxBackend {
         }
     }
 
-    fn rename_session(&self, id: &SessionId, new_name: &str) -> Result<()> {
+    pub fn rename_session(&self, id: &SessionId, new_name: &str) -> Result<()> {
         let status = Command::new("tmux")
             .args(["rename-session", "-t", id.as_str(), new_name])
             .status()
@@ -93,7 +110,7 @@ impl MultiplexerBackend for TmuxBackend {
         }
     }
 
-    fn attach_session(&self, id: &SessionId) -> Result<()> {
+    pub fn attach_session(&self, id: &SessionId) -> Result<()> {
         let in_tmux = std::env::var("TMUX").is_ok();
         let (subcmd, flag) = if in_tmux {
             ("switch-client", "-t")
@@ -113,7 +130,7 @@ impl MultiplexerBackend for TmuxBackend {
         }
     }
 
-    fn kill_session(&self, id: &SessionId) -> Result<()> {
+    pub fn kill_session(&self, id: &SessionId) -> Result<()> {
         let status = Command::new("tmux")
             .args(["kill-session", "-t", id.as_str()])
             .status()
@@ -126,30 +143,7 @@ impl MultiplexerBackend for TmuxBackend {
         }
     }
 
-    fn resize_session(&self, id: &SessionId, rows: u16, cols: u16) -> Result<()> {
-        let cols_s = cols.to_string();
-        let rows_s = rows.to_string();
-        let status = Command::new("tmux")
-            .args([
-                "resize-window",
-                "-t",
-                id.as_str(),
-                "-x",
-                &cols_s,
-                "-y",
-                &rows_s,
-            ])
-            .status()
-            .context("failed to run tmux resize-window")?;
-
-        if status.success() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("tmux resize-window failed"))
-        }
-    }
-
-    fn capture_pane(&self, id: &SessionId, lines: u16) -> Option<String> {
+    pub fn capture_pane(&self, id: &SessionId, lines: u16) -> Option<String> {
         let start = format!("-{}", lines);
         let output = Command::new("tmux")
             .args(["capture-pane", "-p", "-t", id.as_str(), "-S", &start])

@@ -7,7 +7,7 @@ use ratatui::{
 };
 use std::time::{Duration, SystemTime};
 
-use crate::backend::Session;
+use crate::tmux::Session;
 
 pub fn render(f: &mut Frame, sessions: &[Session], selected: usize) {
     let area = f.area();

@@ -9,9 +9,9 @@ use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::backend::{MultiplexerBackend, Session, SessionId, SpawnOptions};
 use crate::gh;
 use crate::state::{PersistedState, SessionRecord};
+use crate::tmux::{Session, SessionId, SpawnOptions, Tmux};
 use crate::ui;
 use crate::worktree;
 
@@ -64,18 +64,13 @@ pub struct App {
     pub workspace: PathBuf,
     pub cwd: PathBuf,
     pub snapshot: String,
-    backend: Box<dyn MultiplexerBackend>,
+    tmux: Tmux,
     state: PersistedState,
     pending_attach: Option<SessionId>,
 }
 
 impl App {
-    pub fn new(
-        backend: Box<dyn MultiplexerBackend>,
-        cmd: String,
-        workspace: PathBuf,
-        cwd: PathBuf,
-    ) -> Self {
+    pub fn new(tmux: Tmux, cmd: String, workspace: PathBuf, cwd: PathBuf) -> Self {
         let state = PersistedState::load(&workspace);
         Self {
             view: View::Dashboard,
@@ -87,14 +82,14 @@ impl App {
             workspace,
             cwd,
             snapshot: String::new(),
-            backend,
+            tmux,
             state,
             pending_attach: None,
         }
     }
 
     pub fn refresh_sessions(&mut self) {
-        let mut sessions = self.backend.list_sessions();
+        let mut sessions = self.tmux.list_sessions();
         for s in sessions.iter_mut() {
             if let Some(rec) = self.state.get(&s.name) {
                 s.cwd = rec.cwd.clone();
@@ -162,7 +157,7 @@ impl App {
     fn refresh_snapshot(&mut self) {
         if let View::Detail(id) = &self.view.clone() {
             self.snapshot = self
-                .backend
+                .tmux
                 .capture_pane(id, 200)
                 .unwrap_or_else(|| String::from("(no snapshot available)"));
         } else {
@@ -342,7 +337,7 @@ impl App {
                 KeyCode::Esc => {}
                 KeyCode::Enter => {
                     if !buffer.is_empty() && buffer != target_name {
-                        let _ = self.backend.rename_session(&target, &buffer);
+                        let _ = self.tmux.rename_session(&target, &buffer);
                         self.state.rename(&target_name, buffer.clone());
                         let _ = self.state.save(&self.workspace);
                         if let View::Detail(ref mut id) = self.view {
@@ -456,7 +451,7 @@ impl App {
             cwd: &spawn_cwd,
         };
 
-        if self.backend.spawn_session(opts).is_ok() {
+        if self.tmux.spawn_session(opts).is_ok() {
             self.state.insert(
                 name.to_string(),
                 SessionRecord {
@@ -539,7 +534,7 @@ impl App {
     }
 
     fn do_kill(&mut self, id: &SessionId, name: &str) {
-        let _ = self.backend.kill_session(id);
+        let _ = self.tmux.kill_session(id);
         if let Some(record) = self.state.remove(name) {
             if let Some(wt) = record.worktree {
                 let _ = worktree::remove(&wt);
@@ -560,7 +555,7 @@ impl App {
         disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-        let _ = self.backend.attach_session(id);
+        let _ = self.tmux.attach_session(id);
 
         enable_raw_mode()?;
         execute!(io::stdout(), EnterAlternateScreen)?;
