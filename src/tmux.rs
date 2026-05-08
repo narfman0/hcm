@@ -28,13 +28,13 @@ pub struct Tmux;
 
 impl Tmux {
     pub fn new() -> Self {
-        let t = Self;
-        t.ensure_detach_binding();
-        t
+        Self
     }
 
     /// Bind Ctrl-\ (no prefix) to detach-client so users can pop out of an
     /// attached session back to the hcm dashboard with a single chord.
+    /// Requires a running tmux server, so this is called lazily after
+    /// session-creating commands rather than at construction time.
     fn ensure_detach_binding(&self) {
         let _ = Command::new("tmux")
             .args(["bind-key", "-n", "C-\\", "detach-client"])
@@ -102,6 +102,7 @@ impl Tmux {
             .context("failed to run tmux new-session")?;
 
         if status.success() {
+            self.ensure_detach_binding();
             Ok(opts.name.to_string())
         } else {
             Err(anyhow::anyhow!("tmux new-session failed"))
@@ -121,6 +122,8 @@ impl Tmux {
     }
 
     pub fn attach_session(&self, id: &SessionId) -> Result<()> {
+        self.ensure_detach_binding();
+
         let in_tmux = std::env::var("TMUX").is_ok();
         let (subcmd, flag) = if in_tmux {
             ("switch-client", "-t")
