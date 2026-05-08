@@ -28,7 +28,17 @@ pub struct Tmux;
 
 impl Tmux {
     pub fn new() -> Self {
-        Self
+        let t = Self;
+        t.ensure_detach_binding();
+        t
+    }
+
+    /// Bind Ctrl-\ (no prefix) to detach-client so users can pop out of an
+    /// attached session back to the hcm dashboard with a single chord.
+    fn ensure_detach_binding(&self) {
+        let _ = Command::new("tmux")
+            .args(["bind-key", "-n", "C-\\", "detach-client"])
+            .status();
     }
 
     pub fn list_sessions(&self) -> Vec<Session> {
@@ -143,15 +153,4 @@ impl Tmux {
         }
     }
 
-    pub fn capture_pane(&self, id: &SessionId, lines: u16) -> Option<String> {
-        let start = format!("-{}", lines);
-        let output = Command::new("tmux")
-            .args(["capture-pane", "-p", "-t", id.as_str(), "-S", &start])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        Some(String::from_utf8_lossy(&output.stdout).into_owned())
-    }
 }

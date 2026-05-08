@@ -16,12 +16,6 @@ use crate::ui;
 use crate::worktree;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum View {
-    Dashboard,
-    Detail(SessionId),
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum NewSessionField {
     Name,
     Cmd,
@@ -55,7 +49,6 @@ pub enum Overlay {
 }
 
 pub struct App {
-    pub view: View,
     pub sessions: Vec<Session>,
     pub selected: usize,
     pub cmd: String,
@@ -63,7 +56,6 @@ pub struct App {
     pub overlay: Option<Overlay>,
     pub workspace: PathBuf,
     pub cwd: PathBuf,
-    pub snapshot: String,
     tmux: Tmux,
     state: PersistedState,
     pending_attach: Option<SessionId>,
@@ -73,7 +65,6 @@ impl App {
     pub fn new(tmux: Tmux, cmd: String, workspace: PathBuf, cwd: PathBuf) -> Self {
         let state = PersistedState::load(&workspace);
         Self {
-            view: View::Dashboard,
             sessions: vec![],
             selected: 0,
             cmd,
@@ -81,7 +72,6 @@ impl App {
             overlay: None,
             workspace,
             cwd,
-            snapshot: String::new(),
             tmux,
             state,
             pending_attach: None,
@@ -113,23 +103,9 @@ impl App {
         self.refresh_sessions();
 
         while self.running {
-            self.refresh_snapshot();
-
             terminal.draw(|f| {
                 let area = f.area();
-                match &self.view.clone() {
-                    View::Dashboard => {
-                        ui::dashboard::render(f, &self.sessions, self.selected);
-                    }
-                    View::Detail(id) => {
-                        let session = self.sessions.iter().find(|s| &s.id == id).cloned();
-                        if let Some(s) = session {
-                            ui::detail::render(f, &s, &self.snapshot);
-                        } else {
-                            self.view = View::Dashboard;
-                        }
-                    }
-                }
+                ui::dashboard::render(f, &self.sessions, self.selected);
                 if let Some(overlay) = &self.overlay {
                     ui::modal::render(f, area, overlay);
                 }
@@ -154,26 +130,12 @@ impl App {
         Ok(())
     }
 
-    fn refresh_snapshot(&mut self) {
-        if let View::Detail(id) = &self.view.clone() {
-            self.snapshot = self
-                .tmux
-                .capture_pane(id, 200)
-                .unwrap_or_else(|| String::from("(no snapshot available)"));
-        } else {
-            self.snapshot.clear();
-        }
-    }
-
     fn handle_key(&mut self, key: KeyEvent) {
         if self.overlay.is_some() {
             self.handle_overlay_key(key);
             return;
         }
-        match self.view.clone() {
-            View::Dashboard => self.handle_dashboard_key(key),
-            View::Detail(_) => self.handle_detail_key(key),
-        }
+        self.handle_dashboard_key(key);
     }
 
     fn handle_dashboard_key(&mut self, key: KeyEvent) {
@@ -192,39 +154,14 @@ impl App {
             }
             KeyCode::Enter => {
                 if let Some(s) = self.sessions.get(self.selected) {
-                    self.view = View::Detail(s.id.clone());
+                    self.pending_attach = Some(s.id.clone());
                 }
             }
             KeyCode::Char('n') if !ctrl => self.quick_new(),
             KeyCode::Char('N') => self.open_new_session_modal(),
             KeyCode::Char('r') if ctrl => self.open_rename_modal(),
+            KeyCode::Char('y') if ctrl => self.open_gh_panel_for_selected(),
             KeyCode::Char('k') if !ctrl => self.open_kill_confirm(),
-            _ => {}
-        }
-    }
-
-    fn handle_detail_key(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let id = match &self.view {
-            View::Detail(id) => id.clone(),
-            _ => return,
-        };
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.view = View::Dashboard;
-            }
-            KeyCode::Char('t') if ctrl => {
-                self.pending_attach = Some(id);
-            }
-            KeyCode::Char('y') if ctrl => {
-                self.open_gh_panel(&id);
-            }
-            KeyCode::Char('r') if ctrl => {
-                self.open_rename_modal_for(&id);
-            }
-            KeyCode::Char('\\') if ctrl => {
-                self.view = View::Dashboard;
-            }
             _ => {}
         }
     }
@@ -340,11 +277,6 @@ impl App {
                         let _ = self.tmux.rename_session(&target, &buffer);
                         self.state.rename(&target_name, buffer.clone());
                         let _ = self.state.save(&self.workspace);
-                        if let View::Detail(ref mut id) = self.view {
-                            if id == &target {
-                                *id = buffer.clone();
-                            }
-                        }
                     }
                     self.refresh_sessions();
                 }
@@ -489,16 +421,6 @@ impl App {
         }
     }
 
-    fn open_rename_modal_for(&mut self, id: &SessionId) {
-        if let Some(s) = self.sessions.iter().find(|s| &s.id == id) {
-            self.overlay = Some(Overlay::Rename {
-                target: s.id.clone(),
-                target_name: s.name.clone(),
-                buffer: s.name.clone(),
-            });
-        }
-    }
-
     fn open_kill_confirm(&mut self) {
         if let Some(s) = self.sessions.get(self.selected) {
             self.overlay = Some(Overlay::ConfirmKill {
@@ -508,8 +430,8 @@ impl App {
         }
     }
 
-    fn open_gh_panel(&mut self, id: &SessionId) {
-        let session = match self.sessions.iter().find(|s| &s.id == id) {
+    fn open_gh_panel_for_selected(&mut self) {
+        let session = match self.sessions.get(self.selected) {
             Some(s) => s.clone(),
             None => return,
         };
@@ -541,9 +463,6 @@ impl App {
             }
         }
         let _ = self.state.save(&self.workspace);
-        if matches!(&self.view, View::Detail(view_id) if view_id == id) {
-            self.view = View::Dashboard;
-        }
         self.refresh_sessions();
     }
 
