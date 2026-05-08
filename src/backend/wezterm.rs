@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::SystemTime;
 
-use super::{MultiplexerBackend, Session, SessionId};
+use super::{MultiplexerBackend, Session, SessionId, SpawnOptions};
 
 pub struct WezTermBackend;
 
@@ -19,6 +20,8 @@ struct WezPane {
     title: String,
     #[serde(default)]
     tty_name: String,
+    #[serde(default)]
+    cwd: String,
 }
 
 impl MultiplexerBackend for WezTermBackend {
@@ -45,14 +48,17 @@ impl MultiplexerBackend for WezTermBackend {
                 cmd: p.tty_name.clone(),
                 running: true,
                 created_at: SystemTime::now(),
+                cwd: PathBuf::from(p.cwd),
+                worktree: None,
             })
             .collect()
     }
 
-    fn spawn_session(&self, name: &str, cmd: &str) -> Result<SessionId> {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
+    fn spawn_session(&self, opts: SpawnOptions) -> Result<SessionId> {
+        let cwd_str = opts.cwd.to_string_lossy().into_owned();
+        let parts: Vec<&str> = opts.cmd.split_whitespace().collect();
         let mut c = Command::new("wezterm");
-        c.args(["cli", "spawn", "--"]);
+        c.args(["cli", "spawn", "--cwd", &cwd_str, "--"]);
         c.args(&parts);
 
         let output = c.output().context("wezterm cli spawn failed")?;
@@ -62,10 +68,14 @@ impl MultiplexerBackend for WezTermBackend {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
-        // stdout contains the pane id
         let pane_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let _ = name; // WezTerm doesn't have named sessions like tmux; use pane id
+        let _ = opts.name;
         Ok(pane_id)
+    }
+
+    fn rename_session(&self, _id: &SessionId, _new_name: &str) -> Result<()> {
+        // WezTerm panes don't have stable user-visible names like tmux; no-op for now.
+        Ok(())
     }
 
     fn attach_session(&self, id: &SessionId) -> Result<()> {
@@ -83,7 +93,6 @@ impl MultiplexerBackend for WezTermBackend {
     }
 
     fn kill_session(&self, id: &SessionId) -> Result<()> {
-        // WezTerm doesn't have a direct kill-pane; send Ctrl-C then close
         Command::new("wezterm")
             .args(["cli", "send-text", "--pane-id", id, "--no-paste"])
             .arg("\x03")

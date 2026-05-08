@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::{MultiplexerBackend, Session, SessionId};
+use super::{MultiplexerBackend, Session, SessionId, SpawnOptions};
 
 /// Stub backend for Windows / fallback environments.
 /// TODO: implement using psmux or Windows Terminal APIs.
@@ -14,27 +14,26 @@ impl PsmuxBackend {
 
 impl MultiplexerBackend for PsmuxBackend {
     fn list_sessions(&self) -> Vec<Session> {
-        // TODO: implement psmux session listing
         vec![]
     }
 
-    fn spawn_session(&self, _name: &str, _cmd: &str) -> Result<SessionId> {
-        // TODO: implement psmux session spawning
+    fn spawn_session(&self, _opts: SpawnOptions) -> Result<SessionId> {
         Ok(String::new())
     }
 
+    fn rename_session(&self, _id: &SessionId, _new_name: &str) -> Result<()> {
+        Ok(())
+    }
+
     fn attach_session(&self, _id: &SessionId) -> Result<()> {
-        // TODO: implement psmux session attach
         Ok(())
     }
 
     fn kill_session(&self, _id: &SessionId) -> Result<()> {
-        // TODO: implement psmux session kill
         Ok(())
     }
 
     fn resize_session(&self, _id: &SessionId, _rows: u16, _cols: u16) -> Result<()> {
-        // TODO: implement psmux session resize
         Ok(())
     }
 }

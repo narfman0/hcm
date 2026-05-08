@@ -2,14 +2,14 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 use std::time::{Duration, SystemTime};
 
 use crate::backend::Session;
 
-pub fn render(f: &mut Frame, session: &Session) {
+pub fn render(f: &mut Frame, session: &Session, snapshot: &str) {
     let area = f.area();
 
     let outer_block = Block::default()
@@ -23,14 +23,14 @@ pub fn render(f: &mut Frame, session: &Session) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // session metadata
-            Constraint::Min(1),    // placeholder for future terminal embed
-            Constraint::Length(1), // footer
+            Constraint::Length(10),
+            Constraint::Min(1),
+            Constraint::Length(1),
         ])
         .split(inner);
 
     render_metadata(f, chunks[0], session);
-    render_placeholder(f, chunks[1]);
+    render_snapshot(f, chunks[1], snapshot);
     render_footer(f, chunks[2]);
 }
 
@@ -38,17 +38,13 @@ fn render_metadata(f: &mut Frame, area: ratatui::layout::Rect, session: &Session
     let status = if session.running { "running" } else { "idle" };
     let age = format_age(session.created_at);
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled("  Name:    ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 session.name.clone(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-        ]),
-        Line::from(vec![
-            Span::styled("  ID:      ", Style::default().fg(Color::DarkGray)),
-            Span::raw(session.id.clone()),
         ]),
         Line::from(vec![
             Span::styled("  Command: ", Style::default().fg(Color::DarkGray)),
@@ -64,12 +60,43 @@ fn render_metadata(f: &mut Frame, area: ratatui::layout::Rect, session: &Session
                     Color::Yellow
                 }),
             ),
-        ]),
-        Line::from(vec![
-            Span::styled("  Started: ", Style::default().fg(Color::DarkGray)),
+            Span::raw("    "),
+            Span::styled("started ", Style::default().fg(Color::DarkGray)),
             Span::raw(age),
         ]),
+        Line::from(vec![
+            Span::styled("  Cwd:     ", Style::default().fg(Color::DarkGray)),
+            Span::raw(session.cwd.to_string_lossy().into_owned()),
+        ]),
     ];
+
+    if let Some(wt) = &session.worktree {
+        lines.push(Line::from(vec![
+            Span::styled("  Worktree: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                wt.path.to_string_lossy().into_owned(),
+                Style::default().fg(Color::Green),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Branch:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(wt.branch.clone(), Style::default().fg(Color::Magenta)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Repo:     ", Style::default().fg(Color::DarkGray)),
+            Span::raw(
+                wt.repo_root
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            ),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("  Worktree: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("—", Style::default().fg(Color::DarkGray)),
+        ]));
+    }
 
     let meta = Paragraph::new(lines).block(
         Block::default()
@@ -80,26 +107,42 @@ fn render_metadata(f: &mut Frame, area: ratatui::layout::Rect, session: &Session
     f.render_widget(meta, area);
 }
 
-fn render_placeholder(f: &mut Frame, area: ratatui::layout::Rect) {
-    let placeholder = Paragraph::new(Line::from(Span::styled(
-        "  [ Terminal embed — coming in a future phase ]",
-        Style::default().fg(Color::DarkGray),
-    )))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
-    f.render_widget(placeholder, area);
+fn render_snapshot(f: &mut Frame, area: ratatui::layout::Rect, snapshot: &str) {
+    let block = Block::default()
+        .title(" Output (read-only snapshot) ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let height = inner.height as usize;
+    let lines: Vec<&str> = snapshot.lines().collect();
+    let visible: Vec<Line> = if lines.len() > height {
+        lines[lines.len() - height..]
+            .iter()
+            .map(|l| Line::raw(l.to_string()))
+            .collect()
+    } else {
+        lines.iter().map(|l| Line::raw(l.to_string())).collect()
+    };
+
+    let paragraph = Paragraph::new(visible).wrap(Wrap { trim: false });
+    f.render_widget(paragraph, inner);
 }
 
 fn render_footer(f: &mut Frame, area: ratatui::layout::Rect) {
     let footer = Paragraph::new(Line::from(vec![
         Span::raw("  "),
+        Span::styled("[Ctrl-T]", Style::default().fg(Color::Yellow)),
+        Span::raw(" terminal  "),
+        Span::styled("[Ctrl-Y]", Style::default().fg(Color::Yellow)),
+        Span::raw(" gh  "),
+        Span::styled("[Ctrl-R]", Style::default().fg(Color::Yellow)),
+        Span::raw(" rename  "),
+        Span::styled("[Ctrl-\\]", Style::default().fg(Color::Yellow)),
+        Span::raw(" detach  "),
         Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
-        Span::raw(" / "),
-        Span::styled("[q]", Style::default().fg(Color::Yellow)),
-        Span::raw(" back to dashboard"),
+        Span::raw(" back"),
     ]));
     f.render_widget(footer, area);
 }

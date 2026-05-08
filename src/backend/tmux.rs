@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, UNIX_EPOCH};
 
-use super::{MultiplexerBackend, Session, SessionId};
+use super::{MultiplexerBackend, Session, SessionId, SpawnOptions};
 
 pub struct TmuxBackend;
 
@@ -18,7 +19,7 @@ impl MultiplexerBackend for TmuxBackend {
             .args([
                 "list-sessions",
                 "-F",
-                "#{session_id}|#{session_name}|#{session_created}|#{session_activity}",
+                "#{session_id}|#{session_name}|#{session_created}|#{session_path}",
             ])
             .output();
 
@@ -39,6 +40,7 @@ impl MultiplexerBackend for TmuxBackend {
                 let name = parts[1].to_string();
                 let created_secs: u64 = parts[2].parse().ok()?;
                 let created_at = UNIX_EPOCH + Duration::from_secs(created_secs);
+                let cwd = PathBuf::from(parts[3]);
 
                 Some(Session {
                     id,
@@ -46,23 +48,49 @@ impl MultiplexerBackend for TmuxBackend {
                     cmd: String::new(),
                     running: true,
                     created_at,
+                    cwd,
+                    worktree: None,
                 })
             })
             .collect()
     }
 
-    fn spawn_session(&self, name: &str, cmd: &str) -> Result<SessionId> {
-        let mut args = vec!["new-session", "-d", "-s", name];
-        let cmd_parts: Vec<&str> = cmd.split_whitespace().collect();
-        args.extend(cmd_parts.iter().copied());
+    fn spawn_session(&self, opts: SpawnOptions) -> Result<SessionId> {
+        let cwd_str = opts.cwd.to_string_lossy().into_owned();
+        let mut args: Vec<String> = vec![
+            "new-session".into(),
+            "-d".into(),
+            "-s".into(),
+            opts.name.into(),
+            "-c".into(),
+            cwd_str,
+        ];
+        for tok in opts.cmd.split_whitespace() {
+            args.push(tok.to_string());
+        }
 
-        Command::new("tmux")
-            .args(&args)
+        let status = Command::new("tmux")
+            .args(args.iter().map(|s| s.as_str()))
             .status()
-            .context("failed to run tmux new-session")?
-            .success()
-            .then_some(name.to_string())
-            .ok_or_else(|| anyhow::anyhow!("tmux new-session failed"))
+            .context("failed to run tmux new-session")?;
+
+        if status.success() {
+            Ok(opts.name.to_string())
+        } else {
+            Err(anyhow::anyhow!("tmux new-session failed"))
+        }
+    }
+
+    fn rename_session(&self, id: &SessionId, new_name: &str) -> Result<()> {
+        let status = Command::new("tmux")
+            .args(["rename-session", "-t", id.as_str(), new_name])
+            .status()
+            .context("failed to run tmux rename-session")?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("tmux rename-session failed"))
+        }
     }
 
     fn attach_session(&self, id: &SessionId) -> Result<()> {
@@ -119,5 +147,17 @@ impl MultiplexerBackend for TmuxBackend {
         } else {
             Err(anyhow::anyhow!("tmux resize-window failed"))
         }
+    }
+
+    fn capture_pane(&self, id: &SessionId, lines: u16) -> Option<String> {
+        let start = format!("-{}", lines);
+        let output = Command::new("tmux")
+            .args(["capture-pane", "-p", "-t", id.as_str(), "-S", &start])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }

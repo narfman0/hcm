@@ -1,5 +1,8 @@
 use anyhow::Result;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+use crate::worktree::Worktree;
 
 pub mod psmux;
 pub mod tmux;
@@ -14,14 +17,28 @@ pub struct Session {
     pub cmd: String,
     pub running: bool,
     pub created_at: SystemTime,
+    pub cwd: PathBuf,
+    pub worktree: Option<Worktree>,
+}
+
+pub struct SpawnOptions<'a> {
+    pub name: &'a str,
+    pub cmd: &'a str,
+    pub cwd: &'a Path,
 }
 
 pub trait MultiplexerBackend {
     fn list_sessions(&self) -> Vec<Session>;
-    fn spawn_session(&self, name: &str, cmd: &str) -> Result<SessionId>;
+    fn spawn_session(&self, opts: SpawnOptions) -> Result<SessionId>;
+    fn rename_session(&self, id: &SessionId, new_name: &str) -> Result<()>;
     fn attach_session(&self, id: &SessionId) -> Result<()>;
     fn kill_session(&self, id: &SessionId) -> Result<()>;
     fn resize_session(&self, id: &SessionId, rows: u16, cols: u16) -> Result<()>;
+    /// Read recent terminal output for a session, if the backend supports it.
+    /// Returns `None` if the backend can't snapshot.
+    fn capture_pane(&self, _id: &SessionId, _lines: u16) -> Option<String> {
+        None
+    }
 }
 
 /// Auto-detect the best available backend at startup.

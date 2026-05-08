@@ -1,8 +1,11 @@
 mod app;
 mod backend;
+mod gh;
+mod state;
 mod ui;
+mod worktree;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::{
     execute,
@@ -15,9 +18,9 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "hcm", about = "Manage multiple Claude Code / terminal sessions")]
 struct Cli {
-    /// Workspace directory
-    #[arg(long, default_value = "~/.hcm")]
-    workspace: PathBuf,
+    /// Workspace directory (defaults to ~/.hcm)
+    #[arg(long)]
+    workspace: Option<PathBuf>,
 
     /// Command to launch for new sessions
     #[arg(long, default_value = "claude --dangerously-skip-permissions")]
@@ -37,19 +40,27 @@ fn main() -> Result<()> {
         cli.cmd.clone()
     };
 
+    let workspace = match cli.workspace {
+        Some(p) => p,
+        None => dirs::home_dir()
+            .context("could not resolve home directory")?
+            .join(".hcm"),
+    };
+    std::fs::create_dir_all(&workspace).context("failed to create hcm workspace dir")?;
+
+    let cwd = std::env::current_dir().context("failed to read current dir")?;
+
     let backend = backend::detect_backend();
 
-    // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend_term = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend_term)?;
 
-    let app = app::App::new(backend, cmd);
+    let app = app::App::new(backend, cmd, workspace, cwd);
     let result = app.run(&mut terminal);
 
-    // Restore terminal
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
